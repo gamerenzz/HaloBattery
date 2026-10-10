@@ -12,8 +12,7 @@ name: Build and release
 # antivirus machine-learning heuristics often flag as a trojan.
 
 on:
-  push:
-    tags: ["v*"]
+
   workflow_dispatch:
 
 permissions:
