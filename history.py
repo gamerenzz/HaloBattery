@@ -17,6 +17,8 @@ restart of the app or of Windows.
 """
 from __future__ import annotations
 
+from i18n import tr
+
 import json
 import os
 import time
@@ -35,10 +37,10 @@ def format_left(seconds: float) -> str:
     """12600 -> 'about 4 h of use left'."""
     hours = seconds / 3600.0
     if hours < 1:
-        return "less than 1 h of use left"
+        return tr("less than 1 h of use left")
     if hours < 48:
-        return f"about {round(hours)} h of use left"
-    return f"about {round(hours / 24)} days of use left"
+        return tr("about {} h of use left").format(round(hours))
+    return tr("about {} days of use left").format(round(hours / 24))
 
 
 class History:

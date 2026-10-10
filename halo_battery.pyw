@@ -104,6 +104,8 @@ from pystray import Menu, MenuItem as Item  # noqa: E402
 
 import flyout  # noqa: E402
 import history  # noqa: E402
+import i18n  # noqa: E402
+from i18n import tr  # noqa: E402
 import icons  # noqa: E402
 import updates  # noqa: E402
 import winevents  # noqa: E402
@@ -117,7 +119,7 @@ from providers import (AmInfinityProvider, AstroProvider, AsusProvider,  # noqa:
                        LogitechCenturionProvider,
                        MchoseProvider, NintendoProvider, PlayStationProvider, PulsarProvider,
                        RazerProvider, SteelSeriesEliteProvider, SteelSeriesProvider,
-                       WLmouseProvider, XInputProvider)
+                       WLmouseProvider, XInputProvider, RapooProvider)
 from providers.bluetooth import BluetoothWatcher  # noqa: E402
 from providers.jbl import PROBE_LISTEN_S as JBL_PROBE_LISTEN_S  # noqa: E402
 
@@ -146,8 +148,9 @@ DEFAULTS = {
     "playstation_full_mode": False,
     "disabled_providers": [],     # provider names turned off in Preferences > Device types
     "time_left": True,      # "about N h of use left" in the tooltip (history.py)
-    "percent_in_icon": False,  # the level as a number in the ring, instead of the pictogram
+    "percent_in_icon": True,   # the level as a number in the ring, instead of the pictogram
     "quiet_fullscreen": True,  # while a game is full screen: hold alerts, poll every 5 min
+    "language": "auto",       # "zh" / "en" / "auto" (the Windows display language)
     "status_file": False,      # write status.json for Rainmeter, Stream Deck, scripts
 }
 
@@ -176,6 +179,7 @@ PROVIDER_LABELS = {
     "nintendo": "Nintendo Switch controllers",
     "playstation": "PlayStation controllers",
     "pulsar": "Pulsar / ATK VXE mice",
+    "rapoo": "Rapoo mice (2.4G receiver)",
     "razer": "Razer mice and headsets",
     "steelseries": "SteelSeries",
     "steelseries_elite": "SteelSeries Arctis Nova Elite",
@@ -193,7 +197,8 @@ def make_providers(jbl_listen_first: float = 0.0) -> list:
             PlayStationProvider(), EightBitDoProvider(), BarracudaProvider(), NintendoProvider(),
             AsusProvider(), GWolvesProvider(), LofreeProvider(), AstroProvider(), CorsairProvider(),
             LamzuProvider(), AmInfinityProvider(),
-            SteelSeriesEliteProvider(), LogitechCenturionProvider(), HyperXCloud3SProvider()]
+            SteelSeriesEliteProvider(), LogitechCenturionProvider(), HyperXCloud3SProvider(),
+            RapooProvider()]
 
 
 # ---------------------------------------------------------------- config
@@ -253,6 +258,13 @@ def load_config() -> dict:
             log.warning("config: ignoring %s=%r, using %r", key, value, DEFAULTS[key])
             continue
         cfg[key] = value
+    # First start of a build that has the language setting: the settings file is from an
+    # older one. Show the level as a number in the icon, which is what this build is for,
+    # and remember the choice, so it is not applied again on every start.
+    if "language" not in data:
+        cfg["language"] = "auto"
+        cfg["percent_in_icon"] = True
+        save_config(cfg)
     return cfg
 
 
@@ -325,17 +337,17 @@ def running_from_temp() -> bool:
 
 # The texts of the app's notifications.
 def low_battery_text(name: str, level: Optional[int], approx: bool) -> str:
-    left = "battery is low" if approx else f"{level}% left"
-    return f"{name}: {left}. Time to charge."
+    left = tr("battery is low") if approx else tr("{}% left").format(level)
+    return tr("{}: {}. Time to charge.").format(name, left)
 
 
 def fully_charged_text(name: str) -> str:
-    return f"{name} is fully charged."
+    return tr("{} is fully charged.").format(name)
 
 
 def update_text(latest: str) -> str:
-    return (f"Version {latest} is available. Right-click a battery icon "
-            f"and choose \"Download v{latest}…\".")
+    return tr("Version {} is available. Right-click a battery icon "
+              "and choose \"Download v{}…\".").format(latest, latest)
 
 
 # Windows titles a notification with the app that sent it. Without an id of its own the
@@ -744,15 +756,15 @@ def describe(st: DeviceStatus, name: Optional[str] = None, left: str = "") -> st
 def device_state(st: DeviceStatus, left: str = "") -> str:
     """The part of describe() after the name: "85%, charging", "no link ..."."""
     if st.approx:
-        state = st.approx          # XInput: coarse levels or "not reported yet", never a fake "NN%"
+        state = tr(st.approx)      # XInput: coarse levels or "not reported yet", never a fake "NN%"
     elif st.level is None:
-        state = "no link (off or asleep)"
+        state = tr("no link (off or asleep)")
     else:
         state = f"{st.level}%"
         if st.charging:
-            state += ", charging"
+            state += ", " + tr("charging")
         if not st.online:
-            state += " (last known value, device asleep)"
+            state += " " + tr("(last known value, device asleep)")
         elif left and not st.charging:
             state += f", {left}"
     return state
@@ -808,7 +820,8 @@ def ask_name(current: str) -> Optional[str]:
     script = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
               "Add-Type -AssemblyName Microsoft.VisualBasic; "
               "[Microsoft.VisualBasic.Interaction]::InputBox("
-              "'New name for this device:', 'Halo Battery - Rename', $env:HALO_BATTERY_NAME)")
+              "'" + tr("New name for this device:") + "', '" + tr("Halo Battery - Rename")
+              + "', $env:HALO_BATTERY_NAME)")
     try:
         res = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -967,6 +980,7 @@ class WakeEvent(threading.Event):
 class App:
     def __init__(self):
         self.cfg = load_config()
+        i18n.set_language(self.cfg.get("language"))
         self.light_taskbar = False
         self.theme_evt = threading.Event()   # "re-check the icon colour now"
         self.win_events: Optional[winevents.WindowEventWatcher] = None
@@ -1009,7 +1023,8 @@ class App:
             if owner and owner.status:
                 return self.display_name(owner.status) or owner.status.name
             hidden = len(self._settings_map("hidden"))
-            return f"No devices shown ({hidden} hidden)" if hidden else "No devices found"
+            return (tr("No devices shown ({} hidden)").format(hidden) if hidden
+                    else tr("No devices found"))
 
         def header_detail():
             if owner and owner.status:
@@ -1045,6 +1060,14 @@ class App:
                 self.wake.set()
             return _f
 
+        def pick_language(value):
+            def _f(icon, item):
+                self.cfg["language"] = value
+                save_config(self.cfg)
+                i18n.set_language(value)
+                self.refresh_menus()
+            return _f
+
         def set_theme(mode):
             def _f(icon, item):
                 self.cfg["icon_theme"] = mode
@@ -1056,16 +1079,19 @@ class App:
         def toggle_autostart(icon, item):
             try:
                 if not set_autostart(not autostart_enabled()):
-                    icon.notify(TEMP_AUTOSTART_TEXT, "Start with Windows")
+                    icon.notify(tr(TEMP_AUTOSTART_TEXT), tr("Start with Windows"))
             except OSError as e:
                 log.warning("autostart: %s", e)
 
-        intervals = [(15, "15 s"), (30, "30 s"), (60, "1 min"), (120, "2 min"), (300, "5 min")]
-        themes = [("auto", "Automatic"), ("white", "White"), ("black", "Black")]
-        lows = [(0, "Off"), (10, "10%"), (15, "15%"), (20, "20%"), (25, "25%"), (30, "30%")]
+        intervals = [(15, tr("15 s")), (30, tr("30 s")), (60, tr("1 min")),
+                     (120, tr("2 min")), (300, tr("5 min"))]
+        themes = [("auto", tr("Automatic")), ("white", tr("White")), ("black", tr("Black"))]
+        lows = [(0, tr("Off")), (10, "10%"), (15, "15%"), (20, "20%"), (25, "25%"), (30, "30%")]
+        languages = [("auto", tr("Automatic")), ("zh", tr("简体中文")), ("en", tr("English"))]
 
         def update_text(_item):
-            return f"Download v{self.update[0]}…" if self.update else "Download update…"
+            return (tr("Download v{}…").format(self.update[0]) if self.update
+                    else tr("Download update…"))
 
         def renamed(_item):
             return bool(owner and owner.status and owner.status.key in self._settings_map("names"))
@@ -1091,7 +1117,7 @@ class App:
 
         def default_low_text(_item):
             low = self.cfg["low"]
-            return f"Default ({low}%)" if low else "Default (off)"
+            return tr("Default ({}%)").format(low) if low else tr("Default (off)")
 
         def provider_on(name):
             return lambda _item: name not in self.disabled_providers()
@@ -1101,66 +1127,67 @@ class App:
 
         def provider_items():
             for name, label in sorted(PROVIDER_LABELS.items(), key=lambda kv: kv[1].lower()):
-                yield Item(label, flip_provider(name), checked=provider_on(name))
+                yield Item(tr(label), flip_provider(name), checked=provider_on(name))
 
         def hidden_items():
             # built each time the menu opens, so it always shows the current list
             hidden = self._settings_map("hidden")
             for key, name in sorted(hidden.items(), key=lambda kv: str(kv[1]).lower()):
-                yield Item(f"Show {name}", show_again(key))
+                yield Item(tr("Show {}").format(name), show_again(key))
 
         # items for the device of this icon only (the "no devices" icon has none)
         device_items = [
             # the flyout has the pencil next to the name instead
-            flyout.classic_only(Item("Rename…", lambda i, it: self.rename(owner))),
-            Item("Reset name", lambda i, it: self.reset_name(owner), visible=renamed),
-            Item("Icon", Menu(*[Item(label, pick(value), checked=picked(value), radio=True)
-                                for value, label in PICTOGRAM_CHOICES])),
-            Item("Low battery alert at", Menu(
+            flyout.classic_only(Item(tr("Rename…"), lambda i, it: self.rename(owner))),
+            Item(tr("Reset name"), lambda i, it: self.reset_name(owner), visible=renamed),
+            Item(tr("Icon"), Menu(*[Item(tr(label), pick(value), checked=picked(value), radio=True)
+                                    for value, label in PICTOGRAM_CHOICES])),
+            Item(tr("Low battery alert at"), Menu(
                 Item(default_low_text, pick_device_low(None), checked=device_low_picked(None), radio=True),
                 *[Item(t, pick_device_low(p), checked=device_low_picked(p), radio=True)
                   for p, t in lows])),
-            Item("Hide this device", lambda i, it: self.hide(owner)),
+            Item(tr("Hide this device"), lambda i, it: self.hide(owner)),
         ] if owner is not None else []
 
         # all settings in one submenu, so the main menu keeps only the things used often
         preferences = Menu(
             # - / + in the menu; the classic menu shows them as a list to pick from
-            flyout.CounterItem("Poll interval", intervals, lambda: self.cfg["interval"], set_interval),
-            flyout.CounterItem("Low battery alert", lows, lambda: self.cfg["low"], set_low),
-            Item("Alert when fully charged", toggle("full_alert"),
+            flyout.CounterItem(tr("Poll interval"), intervals,
+                                lambda: self.cfg["interval"], set_interval),
+            flyout.CounterItem(tr("Low battery alert"), lows, lambda: self.cfg["low"], set_low),
+            Item(tr("Alert when fully charged"), toggle("full_alert"),
                  checked=lambda it: self.cfg.get("full_alert", True)),
-            Item("Estimated time left", toggle("time_left"),
+            Item(tr("Estimated time left"), toggle("time_left"),
                  checked=lambda it: self.cfg.get("time_left", True)),
-            Item("Quiet while gaming", toggle("quiet_fullscreen"),
+            Item(tr("Quiet while gaming"), toggle("quiet_fullscreen"),
                  checked=lambda it: self.cfg.get("quiet_fullscreen", True)),
             # for full-screen games, where the notification is not seen (#66)
-            Item("Sound with the low battery alert", toggle("low_sound"),
+            Item(tr("Sound with the low battery alert"), toggle("low_sound"),
                  checked=lambda it: self.cfg.get("low_sound", False)),
             Menu.SEPARATOR,
-            Item("Windows Bluetooth devices", toggle("bluetooth"),
+            Item(tr("Windows Bluetooth devices"), toggle("bluetooth"),
                  checked=lambda it: self.cfg["bluetooth"]),
             # off: a PS4 / PS5 controller over Bluetooth shows its level only while Steam or a
             # game has it in the full mode; on: the app switches it, which some games do not
             # survive until the controller is turned off and on (#96)
-            Item("PlayStation full mode (Bluetooth)", toggle("playstation_full_mode"),
+            Item(tr("PlayStation full mode (Bluetooth)"), toggle("playstation_full_mode"),
                  checked=lambda it: self.cfg.get("playstation_full_mode", False)),
-            Item("Device types", Menu(provider_items)),
-            Item("Device pictogram", toggle("badges"),
+            Item(tr("Device types"), Menu(provider_items)),
+            Item(tr("Device pictogram"), toggle("badges"),
                  checked=lambda it: self.cfg["badges"]),
-            Item("Percentage in the icon", toggle("percent_in_icon"),
+            Item(tr("Percentage in the icon"), toggle("percent_in_icon"),
                  checked=lambda it: self.cfg.get("percent_in_icon", False)),
-            Item("Charging animation", toggle("animation"),
+            Item(tr("Charging animation"), toggle("animation"),
                  checked=lambda it: self.cfg["animation"]),
-            Item("Icon colour", Menu(*[
+            Item(tr("Icon colour"), Menu(*[
                 Item(t, set_theme(m), checked=lambda it, m=m: self.cfg.get("icon_theme", "auto") == m, radio=True)
                 for m, t in themes])),
             Menu.SEPARATOR,
-            Item("Status file for other apps", toggle("status_file"),
+            Item(tr("Status file for other apps"), toggle("status_file"),
                  checked=lambda it: self.cfg.get("status_file", False)),
-            Item("Start with Windows", toggle_autostart,
+            Item(tr("Start with Windows"), toggle_autostart,
                  checked=lambda it: autostart_enabled()),
-            Item("Check for updates", toggle("update_check"),
+            Item(tr("Check for updates"), toggle("update_check"),
                  checked=lambda it: self.cfg.get("update_check", True)),
         )
 
@@ -1171,13 +1198,18 @@ class App:
                  visible=lambda it: self.update is not None),
             *device_items,
             Menu.SEPARATOR,
-            Item("Refresh now", lambda i, it: self.wake.set(), default=True),
-            Item("Preferences", preferences),
-            Item("Hidden devices", Menu(hidden_items),
+            Item(tr("Language"), Menu(*[
+                Item(t, pick_language(v),
+                     checked=lambda it, v=v: self.cfg.get("language", "auto") == v, radio=True)
+                for v, t in languages])),
+            Menu.SEPARATOR,
+            Item(tr("Refresh now"), lambda i, it: self.wake.set(), default=True),
+            Item(tr("Preferences"), preferences),
+            Item(tr("Hidden devices"), Menu(hidden_items),
                  visible=lambda it: bool(self._settings_map("hidden"))),
             Menu.SEPARATOR,
-            Item("Diagnostics…", lambda i, it: self.request_diag()),
-            Item(f"Exit (v{VERSION})", lambda i, it: self.quit()),
+            Item(tr("Diagnostics…"), lambda i, it: self.request_diag()),
+            Item(tr("Exit (v{})").format(VERSION), lambda i, it: self.quit()),
         )
 
     # ---------------- hide / rename
@@ -1191,9 +1223,12 @@ class App:
         return value
 
     def display_name(self, st: DeviceStatus) -> str:
-        """The name the user gave the device, or the device's own name."""
+        """The name the user gave the device, or the device's own name.
+
+        A name from a provider is translated too (e.g. "Rapoo mouse"), and a name that
+        has no translation is shown as it is."""
         name = self._settings_map("names").get(st.key)
-        return name if isinstance(name, str) and name else st.name
+        return name if isinstance(name, str) and name else tr(st.name)
 
     def hide(self, owner: Optional[DeviceIcon]) -> None:
         """Remove the icon and remember the device, so it does not come back."""
@@ -2035,6 +2070,7 @@ def probe():
             pass
     app = App.__new__(App)
     app.cfg = load_config()
+    i18n.set_language(app.cfg.get("language"))
     app.providers = make_providers(jbl_listen_first=JBL_PROBE_LISTEN_S)
     app.bt = BluetoothProvider()
     res = []
